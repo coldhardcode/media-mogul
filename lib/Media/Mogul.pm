@@ -2,11 +2,20 @@ package Media::Mogul;
 
 use Moose;
 
+use Media::Mogul::Object;
+
 our $VERSION = '0.01';
 
-has 'processor' => (
-    is  => 'rw',
-    isa => 'Media::Mogul::Processor',
+has 'stores' => (
+    is      => 'rw',
+    isa     => 'ArrayRef',
+    default => sub { [] }
+);
+
+has 'processors' => (
+    is      => 'rw',
+    isa     => 'ArrayRef',
+    default => sub { [] }
 );
 
 =head1 NAME
@@ -21,12 +30,54 @@ Version 0.01
 
 sub BUILD {
     my ( $self ) = @_;
+
     # How to load processors?
+    my @stores = @{ $self->stores };
+
+    my @configured_stores = ();
+    while ( @stores ) {
+        my ( $name, $config ) = (shift @stores, shift @stores);
+        die "$name config is not a hash reference"
+            unless $config and ref $config eq 'HASH';
+        my $class = "Media::Mogul::Store::$name";
+        if ( $name =~ /^\+/ ) {
+            $class = $name;
+        }
+        Class::MOP::load_class($class)
+            unless Class::MOP::is_class_loaded($class);
+
+        my $s = $class->new( $config );
+        push @configured_stores, $s;
+    }
+    $self->stores( \@configured_stores );
+
+    return $self;
 }
 
-sub process {
-    my ( $self ) = @_;
-    $self->processor->process( $self, @_ );
+sub store {
+    my ( $self, %params ) = @_;
+    my $obj = Media::Mogul::Object->new( %params );
+    foreach my $store ( @{ $self->stores } ) {
+         $store->store( $obj );
+    }
+    return $obj->uuid;
+}
+
+sub fetch {
+    my ( $self, $uuid ) = @_;
+
+    my $obj;
+
+    foreach my $store ( @{ $self->stores } ) {
+        my $step_obj = $store->fetch( $uuid );
+        if ( $step_obj and $obj ) {
+            $obj = $store->merge( $step_obj, $obj );
+        } elsif ( $step_obj ) {
+            $obj = $step_obj;
+        }
+    }
+
+    return $obj;
 }
 
 =head1 SYNOPSIS
